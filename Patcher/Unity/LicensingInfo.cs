@@ -5,6 +5,7 @@ using System.IO;
 using System.Security.Cryptography;
 using System.Security.Cryptography.Xml;
 using System.Text;
+using System.Threading.Tasks;
 using System.Xml;
 using System.Xml.Serialization;
 
@@ -15,11 +16,8 @@ namespace UniHacker
         internal static int s_MajorVersion;
         internal static int s_MinorVersion;
 
-        public static void TryGenerate(int majorVersion, int minorVersion)
+        static async Task<string> GetLicensePath(int majorVersion, int minorVersion)
         {
-            s_MajorVersion = majorVersion;
-            s_MinorVersion = minorVersion;
-
             var commonAppData = string.Empty;
             switch (PlatformUtils.GetPlatformType())
             {
@@ -30,17 +28,16 @@ namespace UniHacker
                     commonAppData = "/Library/Application Support";
                     break;
                 case PlatformType.Linux:
-                    var directories = Directory.GetDirectories("/home");
-                    if (directories.Length > 0)
                     {
-                        var tempName = Path.GetFileName(directories[0]);
-                        commonAppData = $"/home/{tempName}/.local/share/unity3d";
+#if DOCKER_ENV
+                        commonAppData = "/root/.local/share/unity3d";
+#else
+                        var userName = await PlatformUtils.GetLinuxUserName();
+                        commonAppData = $"/home/{userName}/.local/share/unity3d";
+#endif
+
                         if (!Directory.Exists(commonAppData))
                             Directory.CreateDirectory(commonAppData);
-                    }
-                    else
-                    {
-                        throw new Exception("home directory is null");
                     }
                     break;
             }
@@ -57,6 +54,15 @@ namespace UniHacker
             else
                 ulfFilePath = Path.Combine(unityLicensingPath, "Unity_lic.ulf");
 
+            return ulfFilePath;
+        }
+
+        public static async void TryGenerate(int majorVersion, int minorVersion)
+        {
+            s_MajorVersion = majorVersion;
+            s_MinorVersion = minorVersion;
+
+            var ulfFilePath = await GetLicensePath(majorVersion, minorVersion);
             if (File.Exists(ulfFilePath))
                 File.Delete(ulfFilePath);
 
@@ -109,6 +115,13 @@ namespace UniHacker
             contents = contents.Replace("<MachineBindings/>", "<MachineBindings></MachineBindings>");
             File.WriteAllText(ulfFilePath, contents);
         }
+
+        public static async void TryRemove(int majorVersion, int minorVersion)
+        {
+            var ulfFilePath = await GetLicensePath(majorVersion, minorVersion);
+            if (File.Exists(ulfFilePath))
+                File.Delete(ulfFilePath);
+        }
     }
 
     [XmlRoot("root", Namespace = "", IsNullable = false)]
@@ -152,8 +165,9 @@ namespace UniHacker
                 if (removeFeatures.Contains(i))
                     continue;
 
-                features.Add(new XmlValue() { Value = i.ToString() });
+                features.Add(new XmlValue(i));
             }
+            features.Add(new XmlValue((int)FeatureID.PS5));
             Features = features.ToArray();
 
             GenerateSerialNumber();
@@ -207,6 +221,10 @@ namespace UniHacker
     {
         [XmlAttribute]
         public string Value = "";
+
+        public XmlValue() { }
+        public XmlValue(string value) => Value = value;
+        public XmlValue(int value) => Value = value.ToString();
     }
 
     public class XmlEmpty
